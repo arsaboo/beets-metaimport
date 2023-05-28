@@ -65,9 +65,9 @@ class MetaImportPlugin(BeetsPlugin):
                                            default=1)
                     if sel in ('b', 'B', 's', 'S'):
                         return None
-                    return albs[sel - 1] if sel > 0 else None
+                    choice = albs[sel - 1] if sel > 0 else None
             try:
-                yt_album_id = albs.yt_album_id
+                yt_album_id = choice.yt_album_id
             except AttributeError:
                 self._log.debug('No albumid present for: {}', album)
                 continue
