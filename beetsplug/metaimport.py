@@ -59,7 +59,7 @@ class MetaImportPlugin(BeetsPlugin):
                 albs = self.youtube.get_albums(query)
                 if len(albs) > 0:
                     print_(f'Choose candidates for {album} - ')
-                    for i, album in enumerate(albs, start=1):
+                    for i, alb in enumerate(albs, start=1):
                         print(f'{alb}')
                     sel = ui.input_options(('aBort', 'Skip'),
                                            numrange=(1, len(albs)),
