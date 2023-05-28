@@ -52,6 +52,7 @@ class MetaImportPlugin(BeetsPlugin):
         for index, album in enumerate(albums, start=1):
             self._log.info('Processing {}/{} album - {} ',
                            index, len(albums), album)
+            print(album.__dict__)
             # If we're not forcing re-downloading for all tracks, check
             # whether the popularity data is already present
             if "youtube" in self.sources:
