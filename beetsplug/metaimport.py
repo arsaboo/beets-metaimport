@@ -52,11 +52,11 @@ class MetaImportPlugin(BeetsPlugin):
         for index, album in enumerate(albums, start=1):
             self._log.info('Processing {}/{} album - {} ',
                            index, len(albums), album)
-            print(album.__dict__)
+            query = album.albumartist + ' ' + album.album
             # If we're not forcing re-downloading for all tracks, check
             # whether the popularity data is already present
             if "youtube" in self.sources:
-                albs = self.youtube.get_albums(album)
+                albs = self.youtube.get_albums(query)
                 if len(albs) > 0:
                     print_(f'Choose candidates for {album} - ')
                     for i, album in enumerate(albs, start=1):
