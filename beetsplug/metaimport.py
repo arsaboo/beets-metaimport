@@ -25,8 +25,8 @@ class MetaImportPlugin(BeetsPlugin):
         self.sources = config['metaimport']['sources'].as_str_seq()
         for source in self.sources:
             if source == 'youtube':
-                from beetsplug.youtube import YoutubePlugin
-                self.youtube = YoutubePlugin()
+                from beetsplug.youtube import YouTubePlugin
+                self.youtube = YouTubePlugin()
             elif source == 'jiosaavn':
                 from beetsplug.jiosaavn import JioSaavnPlugin
                 self.jiosaavn = JioSaavnPlugin()
