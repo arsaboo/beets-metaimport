@@ -52,6 +52,7 @@ class MetaImportPlugin(BeetsPlugin):
         """Obtain track information from Spotify."""
 
         self._log.debug('Total {} albums', len(albums))
+        mapping = {'artist': 'artist', 'title': 'title'}
 
         for index, album in enumerate(albums, start=1):
             self._log.info('Processing {}/{} album - {} ',
@@ -66,6 +67,8 @@ class MetaImportPlugin(BeetsPlugin):
                            f'{album.albumartist} - {album.album}')
                     for i, alb in enumerate(albs, start=1):
                         print(f'{i}. {alb.artist} - {alb.album}')
+                        distance = self.youtube.album_distance(alb, album, mapping)
+                        print(f'Distance {distance}')
                     sel = ui.input_options(('aBort', 'Skip'),
                                            numrange=(1, len(albs)),
                                            default=1)
