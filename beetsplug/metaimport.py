@@ -65,6 +65,7 @@ class MetaImportPlugin(BeetsPlugin):
                            f'{album.albumartist} - {album.album}')
                     for i, alb in enumerate(albs, start=1):
                         print(f'{i}. {alb.artist} - {alb.album}')
+                        print('album distnace', self.youtube.album_distance(album, albs))
                     sel = ui.input_options(('aBort', 'Skip'),
                                            numrange=(1, len(albs)),
                                            default=1)
