@@ -10,9 +10,10 @@ from io import BytesIO
 import requests
 from beets import config, ui
 from beets.autotag.hooks import AlbumInfo, Distance, TrackInfo
+from beets.autotag.match import distance
 from beets.dbcore import types
 from beets.library import DateType
-from beets.plugins import BeetsPlugin, get_distance
+from beets.plugins import BeetsPlugin
 from beets.ui import print_
 from musicapy.saavn_api.api import SaavnAPI
 from PIL import Image
@@ -65,7 +66,7 @@ class MetaImportPlugin(BeetsPlugin):
                            f'{album.albumartist} - {album.album}')
                     for i, alb in enumerate(albs, start=1):
                         print(f'{i}. {alb.artist} - {alb.album}')
-                        print('album distnace', self.youtube.album_distance(album, albs))
+                        print('album distance', distance(album, albs, mapping))
                     sel = ui.input_options(('aBort', 'Skip'),
                                            numrange=(1, len(albs)),
                                            default=1)
