@@ -60,7 +60,7 @@ class MetaImportPlugin(BeetsPlugin):
             if "youtube" in self.sources:
                 albs = self.youtube.get_albums(query)
                 if len(albs) > 0:
-                    print_(f'Choose candidates for {album.artist} - {album.albumartist}')
+                    print_(f'Choose candidates for {album.albumartist} - {album.album}')
                     
                     for i, alb in enumerate(albs, start=1):
                         print(f'{alb}')
