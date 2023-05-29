@@ -64,8 +64,7 @@ class MetaImportPlugin(BeetsPlugin):
                     print_(f'Choose candidates for {album.albumartist} - {album.album}')
                     
                     for i, alb in enumerate(albs, start=1):
-                        print(f'{alb}')
-                        print("album distance: ", self.youtube.album_distance(album, alb, Mapping[alb, album]))
+                        print(f'{i}. {alb.albumartist} - {alb.album}')
                     sel = ui.input_options(('aBort', 'Skip'),
                                            numrange=(1, len(albs)),
                                            default=1)
