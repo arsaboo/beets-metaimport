@@ -64,7 +64,7 @@ class MetaImportPlugin(BeetsPlugin):
                     print_(f'Choose candidates for {album.albumartist} - {album.album}')
                     
                     for i, alb in enumerate(albs, start=1):
-                        print(f'{i}. {alb.albumartist} - {alb.album}')
+                        print(f'{i}. {alb.artist} - {alb.album}')
                     sel = ui.input_options(('aBort', 'Skip'),
                                            numrange=(1, len(albs)),
                                            default=1)
@@ -72,7 +72,8 @@ class MetaImportPlugin(BeetsPlugin):
                         return None
                     choice = albs[sel - 1] if sel > 0 else None
             try:
-                yt_album_id = choice.yt_album_id
+                print_(f'Fetching {choice.album} - {choice.album_id}')
+                yt_album_id = choice.album_id
             except AttributeError:
                 self._log.debug('No albumid present for: {}', album)
                 continue
