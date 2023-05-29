@@ -66,8 +66,6 @@ class MetaImportPlugin(BeetsPlugin):
                            f'{album.albumartist} - {album.album}')
                     for i, alb in enumerate(albs, start=1):
                         print(f'{i}. {alb.artist} - {alb.album}')
-                        mapping, extra_items, extra_tracks = assign_items(album.items(), alb.tracks)
-                        print('album distance', distance(album, albs, mapping))
                     sel = ui.input_options(('aBort', 'Skip'),
                                            numrange=(1, len(albs)),
                                            default=1)
