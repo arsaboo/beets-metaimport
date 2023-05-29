@@ -6,16 +6,18 @@ import collections
 import re
 import time
 from io import BytesIO
-import beetsplug
+
 import requests
 from beets import config, ui
-from beets.ui import print_
 from beets.autotag.hooks import AlbumInfo, Distance, TrackInfo
 from beets.dbcore import types
 from beets.library import DateType
 from beets.plugins import BeetsPlugin, get_distance
+from beets.ui import print_
 from musicapy.saavn_api.api import SaavnAPI
 from PIL import Image
+
+import beetsplug
 
 
 class MetaImportPlugin(BeetsPlugin):
@@ -58,9 +60,11 @@ class MetaImportPlugin(BeetsPlugin):
             if "youtube" in self.sources:
                 albs = self.youtube.get_albums(query)
                 if len(albs) > 0:
-                    print_(f'Choose candidates for {album.album} - ')
+                    print_(f'Choose candidates for {album.artist} - {album.album}')
+                    
                     for i, alb in enumerate(albs, start=1):
                         print(f'{alb}')
+                        print("album distance: ", self.youtube.get_distance(album, alb))
                     sel = ui.input_options(('aBort', 'Skip'),
                                            numrange=(1, len(albs)),
                                            default=1)
