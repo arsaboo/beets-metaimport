@@ -42,12 +42,12 @@ class MetaImportPlugin(BeetsPlugin):
 
         def func(lib, opts, args):
             albums = lib.albums(ui.decargs(args))
-            self._fetch_ids(albums, ui.should_write())
+            self._fetch_ids(albums)
 
         sync_cmd.func = func
         return [sync_cmd]
 
-    def _fetch_ids(self, albums, write):
+    def _fetch_ids(self, albums):
         """Obtain track information from Spotify."""
 
         self._log.debug('Total {} albums', len(albums))
@@ -61,8 +61,8 @@ class MetaImportPlugin(BeetsPlugin):
             if "youtube" in self.sources:
                 albs = self.youtube.get_albums(query)
                 if len(albs) > 0:
-                    print_(f'Choose candidates for {album.albumartist} - {album.album}')
-                    
+                    print_(f'Choose candidates for '
+                           f'{album.albumartist} - {album.album}')
                     for i, alb in enumerate(albs, start=1):
                         print(f'{i}. {alb.artist} - {alb.album}')
                     sel = ui.input_options(('aBort', 'Skip'),
@@ -72,13 +72,10 @@ class MetaImportPlugin(BeetsPlugin):
                         return None
                     choice = albs[sel - 1] if sel > 0 else None
             try:
-                print_(f'Fetching {choice.album} - {choice.album_id}')
                 yt_album_id = choice.album_id
             except AttributeError:
                 self._log.debug('No albumid present for: {}', album)
                 continue
-
-            album['yt_album_id'] = yt_album_id
-            album.store()
-            if write:
-                album.try_write()
+            for item in album.items():
+                item['yt_album_id'] = yt_album_id
+                item.store()
