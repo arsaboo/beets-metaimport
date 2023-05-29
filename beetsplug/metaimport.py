@@ -16,6 +16,7 @@ from beets.plugins import BeetsPlugin, get_distance
 from beets.ui import print_
 from musicapy.saavn_api.api import SaavnAPI
 from PIL import Image
+from typing import Mapping
 
 import beetsplug
 
@@ -64,7 +65,7 @@ class MetaImportPlugin(BeetsPlugin):
                     
                     for i, alb in enumerate(albs, start=1):
                         print(f'{alb}')
-                        print("album distance: ", self.youtube.album_distance(album, alb, mapping))
+                        print("album distance: ", self.youtube.album_distance(album, alb, Mapping[alb, album]))
                     sel = ui.input_options(('aBort', 'Skip'),
                                            numrange=(1, len(albs)),
                                            default=1)
