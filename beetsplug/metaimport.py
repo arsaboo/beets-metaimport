@@ -64,11 +64,10 @@ class MetaImportPlugin(BeetsPlugin):
                 albs = self.youtube.get_albums(query)
                 if len(albs) > 0:
                     print_(f'Choose candidates for '
-                           f'{album.albumartist} - {album.album}')
+                           f'{album.albumartist} - {album.album}'
+                           f' ({album.year})')
                     for i, alb in enumerate(albs, start=1):
-                        print(f'{i}. {alb.artist} - {alb.album}')
-                        distance = self.youtube.album_distance(alb, album, mapping)
-                        print(f'Distance {distance}')
+                        print(f'{i}. {alb.artist} - {alb.album} ({alb.year})')
                     sel = ui.input_options(('aBort', 'Skip'),
                                            numrange=(1, len(albs)),
                                            default=1)
