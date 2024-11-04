@@ -17,9 +17,8 @@ plugins: [..., metaimport]
 
 metaimport:
     sources:
-        - youtube
         - jiosaavn
-        # Add more sources as they become available
+        - youtube
     exclude_fields:
         - id
         - path
@@ -28,8 +27,10 @@ metaimport:
 
 ### Configuration Options
 
-- `sources`: List of metadata sources in order of preference. Values from sources listed earlier will take precedence in case of conflicts.
-- `exclude_fields`: List of fields to exclude from metadata import.
+- `sources`: List of metadata sources in order of preference. Values from sources listed earlier will take precedence in case of conflicts. Currently supported sources:
+  - `jiosaavn` (requires beets-jiosaavn plugin)
+  - `youtube` (requires beets-youtube plugin)
+- `exclude_fields`: List of fields to exclude from metadata import
 - `merge_strategy`: How to handle conflicting values:
   - `priority`: Use values from the first source that provides them (default)
   - `all`: Collect all unique values in a list
@@ -42,7 +43,10 @@ beet metaimport [query]
 
 The plugin will:
 1. Search for tracks matching your query
-2. For each track, fetch metadata from all configured sources
+2. For each track:
+   - Search each configured source using track information
+   - Try both direct track lookup and album-based lookup
+   - Use fuzzy matching to find the best matching tracks
 3. Merge the metadata according to your configuration
 4. Apply the merged metadata to your tracks
 
@@ -58,11 +62,29 @@ Import metadata for specific artist:
 beet metaimport artist:Beatles
 ```
 
-## Adding New Sources
+Import metadata for an album:
+```bash
+beet metaimport album:"Abbey Road"
+```
 
-The plugin is designed to work with any beets metadata source plugin. Currently supported sources:
-- YouTube (requires [beets-youtube](https://github.com/arsaboo/beets-youtube))
-- JioSaavn (requires [beets-jiosaavn](https://github.com/arsaboo/beets-jiosaavn))
+## Troubleshooting
+
+If you're having issues:
+
+1. Check your configuration:
+   - Ensure all required source plugins are installed
+   - Verify your sources list only includes supported sources
+   - Make sure source plugins are properly configured
+
+2. Enable debug logging in your beets config:
+```yaml
+verbose: yes
+```
+
+3. Common issues:
+   - "No metadata sources available": Check your configuration and ensure required plugins are installed
+   - "No metadata found": Try adjusting your query or check if the track exists in the configured sources
+   - Source plugin errors: Check the specific source plugin's configuration
 
 ## Contributing
 
