@@ -9,6 +9,7 @@ from beets.ui import print_
 from beets.util import displayable_path
 import collections
 from collections import defaultdict
+import pprint
 
 
 class MetaImportPlugin(BeetsPlugin):
@@ -23,6 +24,7 @@ class MetaImportPlugin(BeetsPlugin):
             'sources': [],  # List of metadata sources in order of preference
             'exclude_fields': [],  # Fields to exclude from metadata import
             'merge_strategy': 'priority',  # How to handle conflicts: priority/all
+            'debug': False,  # Enable detailed debug logging
         })
 
         # Initialize source plugins
@@ -43,6 +45,13 @@ class MetaImportPlugin(BeetsPlugin):
                         self._init_source(source)
             else:
                 self._log.debug('No sources configured in metaimport.sources')
+
+    def _debug_log(self, msg, *args):
+        """Log debug messages if debug mode is enabled."""
+        if self.config['debug'].get():
+            if args:
+                msg = msg.format(*args)
+            self._log.info('[DEBUG] {}', msg)
 
     def _init_source(self, source):
         """Initialize a single source plugin."""
@@ -79,11 +88,20 @@ class MetaImportPlugin(BeetsPlugin):
             'metaimport',
             help='import metadata from configured sources'
         )
+        import_cmd.parser.add_option(
+            '-d', '--debug',
+            action='store_true',
+            help='enable debug logging'
+        )
         import_cmd.func = self._command
         return [import_cmd]
 
     def _command(self, lib, opts, args):
         """Main command implementation."""
+        # Set debug mode if requested
+        if opts.debug:
+            self.config['debug'].set(True)
+
         if not self.sources:
             self._log.warning('No valid metadata sources available. '
                             f'Supported sources are: {", ".join(self.SUPPORTED_SOURCES)}')
@@ -118,10 +136,16 @@ class MetaImportPlugin(BeetsPlugin):
                     plugin = self.source_plugins[source]
                     source_metadata = self._get_album_metadata(plugin, albumartist, album_name, items, source)
                     if source_metadata:
+                        self._debug_log('Raw metadata from {}: {}', source,
+                                      pprint.pformat(source_metadata))
                         metadata[source] = source_metadata
                         self._log.debug(f'Got metadata from {source} for {album_name}')
                 except Exception as e:
-                    self._log.warning('Error getting metadata from {}: {}', source, str(e))
+                    self._log.warning('Error getting metadata from {}: {} ({})',
+                                    source, str(e), type(e).__name__)
+                    if self.config['debug'].get():
+                        import traceback
+                        self._log.debug('Traceback: {}', traceback.format_exc())
 
             # Apply metadata if found
             if metadata:
@@ -142,7 +166,7 @@ class MetaImportPlugin(BeetsPlugin):
         """Get metadata for an album from a specific source."""
         try:
             query = self._build_album_query(albumartist, album_name, source)
-            self._log.debug(f'Searching {source} for album: {query}')
+            self._log.info(f'Searching {source} for album: {query}')
 
             albums = plugin.get_albums(query)
             if not albums:
@@ -153,12 +177,23 @@ class MetaImportPlugin(BeetsPlugin):
             if not album_info:
                 return None
 
+            self._debug_log('Selected album info from {}: {}', source,
+                          pprint.pformat(vars(album_info)))
+
             # Get tracks for the album
             if hasattr(plugin, 'get_album_tracks'):
-                tracks = plugin.get_album_tracks(album_info.album_id)
-                if tracks:
-                    # Match tracks with items
-                    return self._match_tracks_to_items(tracks, items)
+                try:
+                    tracks = plugin.get_album_tracks(album_info.album_id)
+                    if tracks:
+                        self._debug_log('Found {} tracks for album', len(tracks))
+                        # Match tracks with items
+                        return self._match_tracks_to_items(tracks, items)
+                except Exception as e:
+                    self._log.warning('Error getting album tracks: {} ({})',
+                                    str(e), type(e).__name__)
+                    if self.config['debug'].get():
+                        import traceback
+                        self._log.debug('Traceback: {}', traceback.format_exc())
 
             return None
 
@@ -192,12 +227,22 @@ class MetaImportPlugin(BeetsPlugin):
                 track = best_match
 
             if track:
+                self._debug_log('Matched track {} to {}', item.title, track.title)
                 # Convert track object to dict if needed
                 if not isinstance(track, dict):
-                    track_dict = vars(track)
+                    track_dict = {}
+                    # Extract common metadata fields
+                    for field in ['title', 'artist', 'album', 'year', 'track',
+                                'albumartist', 'genre', 'composer', 'lyricist']:
+                        if hasattr(track, field):
+                            value = getattr(track, field)
+                            if value:  # Only include non-empty values
+                                track_dict[field] = value
                 else:
                     track_dict = track
                 matched_metadata[item] = track_dict
+            else:
+                self._debug_log('No match found for track: {}', item.title)
 
         return matched_metadata if matched_metadata else None
 
@@ -241,6 +286,8 @@ class MetaImportPlugin(BeetsPlugin):
         for item in items:
             merged = self._merge_metadata_for_item(item, metadata)
             if merged:
+                self._debug_log('Merged metadata for {}: {}', item.title,
+                              pprint.pformat(merged))
                 self._apply_metadata(item, merged)
 
     def _merge_metadata_for_item(self, item, metadata):
