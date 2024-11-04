@@ -406,8 +406,9 @@ class MetaImportPlugin(BeetsPlugin):
         print_('Current album details:')
         print_(f'  Title: {item.album}')
         print_(f'  Artist: {item.albumartist}')
-        print_(f'  Year: {item.year}')
-        print_(f'  Tracks: {len(item.album_items())}')
+        if item.year:
+            print_(f'  Year: {item.year}')
+
         print_('\nAvailable matches:')
 
         for i, album in enumerate(albums, 1):
