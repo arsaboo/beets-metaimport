@@ -1,8 +1,3 @@
-"""
-Adds metaimport plugin to beets.
-Allows importing metadata from multiple sources in order of preference.
-"""
-
 from beets import config, ui
 from beets.plugins import BeetsPlugin
 from beets.ui import print_
@@ -547,39 +542,3 @@ class MetaImportPlugin(BeetsPlugin):
                             merged[key] = value
 
         return merged
-
-    def _apply_metadata(self, item, metadata):
-        """Apply merged metadata to the item."""
-        self._log.info('Attempting to update metadata for: {}', item.title)
-        self._log.info('Available fields to update: {}', list(metadata.keys()))
-
-        changes = []
-        for key, value in metadata.items():
-            try:
-                if hasattr(item, key):
-                    current_value = getattr(item, key)
-                    if current_value != value:
-                        self._log.info('Updating field {} from {} to {}',
-                                     key, current_value, value)
-                        setattr(item, key, value)
-                        changes.append(f'{key}: {current_value} -> {value}')
-                    else:
-                        self._debug_log('Field {} unchanged (value: {})',
-                                      key, current_value)
-                else:
-                    self._debug_log('Field {} not available in item', key)
-            except Exception as e:
-                self._log.warning('Error setting field {}: {} ({})',
-                                key, str(e), type(e).__name__)
-
-        if changes:
-            self._log.info('Applied changes to {}: {}',
-                          displayable_path(item.path), ', '.join(changes))
-            try:
-                item.store()
-                self._log.info('Successfully stored changes to database')
-            except Exception as e:
-                self._log.error('Failed to store changes: {} ({})',
-                              str(e), type(e).__name__)
-        else:
-            self._log.info('No changes needed for: {}', displayable_path(item.path))
