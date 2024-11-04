@@ -8,6 +8,7 @@ from beets.plugins import BeetsPlugin
 from beets.ui import print_
 from beets.util import displayable_path
 import collections
+from collections import defaultdict
 
 
 class MetaImportPlugin(BeetsPlugin):
@@ -50,12 +51,12 @@ class MetaImportPlugin(BeetsPlugin):
             if plugin_class:
                 plugin_instance = plugin_class()
                 # Verify the plugin has the required methods
-                if hasattr(plugin_instance, 'get_albums') or hasattr(plugin_instance, 'get_track'):
+                if hasattr(plugin_instance, 'get_albums'):
                     self.source_plugins[source] = plugin_instance
                     self.sources.append(source)
                     self._log.debug(f'Successfully loaded source plugin: {source}')
                 else:
-                    self._log.warning(f'Source plugin {source} missing required methods')
+                    self._log.warning(f'Source plugin {source} missing required method: get_albums')
         except Exception as e:
             self._log.warning(f'Failed to initialize source {source}: {str(e)}')
 
@@ -93,136 +94,120 @@ class MetaImportPlugin(BeetsPlugin):
             self._log.warning('No items matched your query')
             return
 
-        self._import_metadata(items)
+        # Group items by album
+        albums = self._group_items_by_album(items)
+        self._import_albums_metadata(albums)
 
-    def _import_metadata(self, items):
-        """Import metadata for the given items from all configured sources."""
+    def _group_items_by_album(self, items):
+        """Group items by album for batch processing."""
+        albums = defaultdict(list)
         for item in items:
-            self._log.info('Processing track: {}', displayable_path(item.path))
+            key = (item.albumartist or item.artist, item.album)
+            albums[key].append(item)
+        return albums
+
+    def _import_albums_metadata(self, albums):
+        """Import metadata for albums from all configured sources."""
+        for (albumartist, album_name), items in albums.items():
+            self._log.info('Processing album: {} - {}', albumartist, album_name)
 
             # Collect metadata from all sources
             metadata = {}
             for source in self.sources:
                 try:
                     plugin = self.source_plugins[source]
-                    source_metadata = self._get_metadata_from_source(plugin, item, source)
+                    source_metadata = self._get_album_metadata(plugin, albumartist, album_name, items, source)
                     if source_metadata:
                         metadata[source] = source_metadata
-                        self._log.debug(f'Got metadata from {source} for {item.title}')
+                        self._log.debug(f'Got metadata from {source} for {album_name}')
                 except Exception as e:
                     self._log.warning('Error getting metadata from {}: {}', source, str(e))
 
-            # Merge metadata according to priority
+            # Apply metadata if found
             if metadata:
-                merged = self._merge_metadata(metadata)
-                self._apply_metadata(item, merged)
+                self._apply_album_metadata(items, metadata)
             else:
-                self._log.info('No metadata found for: {}', displayable_path(item.path))
+                self._log.info('No metadata found for album: {} - {}', albumartist, album_name)
 
-    def _build_search_query(self, item, source):
-        """Build an appropriate search query based on the source and available item info."""
+    def _build_album_query(self, albumartist, album_name, source):
+        """Build an appropriate album search query based on the source."""
         if source == 'jiosaavn':
-            # For JioSaavn, use title and artist for more accurate results
-            query_parts = []
-            if item.title:
-                query_parts.append(item.title)
-            if item.artist:
-                query_parts.append(item.artist)
-            return ' '.join(query_parts)
+            # For JioSaavn, use album name and artist
+            return f"{album_name} {albumartist}"
         else:
-            # For other sources, include album info
-            query_parts = []
-            if item.title:
-                query_parts.append(item.title)
-            if item.artist:
-                query_parts.append(item.artist)
-            if item.album:
-                query_parts.append(item.album)
-            return ' '.join(query_parts)
+            # For other sources, same format
+            return f"{album_name} {albumartist}"
 
-    def _get_metadata_from_source(self, plugin, item, source):
-        """Get metadata for an item from a specific source."""
+    def _get_album_metadata(self, plugin, albumartist, album_name, items, source):
+        """Get metadata for an album from a specific source."""
         try:
-            query = self._build_search_query(item, source)
-            self._log.debug(f'Searching {source} for: {query}')
+            query = self._build_album_query(albumartist, album_name, source)
+            self._log.debug(f'Searching {source} for album: {query}')
 
-            if source == 'jiosaavn':
-                # Special handling for JioSaavn
-                try:
-                    if hasattr(plugin, 'get_track'):
-                        track_info = plugin.get_track(query)
-                        if track_info:
-                            # Convert track_info to a dict if it isn't already
-                            if not isinstance(track_info, dict):
-                                track_info = vars(track_info)
-                            return track_info
-                except Exception as e:
-                    self._log.debug(f'JioSaavn track search failed: {str(e)}')
+            albums = plugin.get_albums(query)
+            if not albums:
+                return None
 
-                # Try album search as fallback
-                try:
-                    if hasattr(plugin, 'get_albums'):
-                        albums = plugin.get_albums(query)
-                        if albums:
-                            album_info = self._choose_album_metadata(albums, item)
-                            if album_info and hasattr(plugin, 'get_album_tracks'):
-                                tracks = plugin.get_album_tracks(album_info.album_id)
-                                matching_track = self._find_matching_track(tracks, item)
-                                if matching_track:
-                                    # Convert matching_track to a dict if it isn't already
-                                    if not isinstance(matching_track, dict):
-                                        matching_track = vars(matching_track)
-                                    return matching_track
-                except Exception as e:
-                    self._log.debug(f'JioSaavn album search failed: {str(e)}')
+            # Let user choose the correct album
+            album_info = self._choose_album_metadata(albums, items[0])
+            if not album_info:
+                return None
 
-            else:
-                # Generic handling for other sources
-                if hasattr(plugin, 'get_track'):
-                    track_info = plugin.get_track(query)
-                    if track_info:
-                        return track_info
+            # Get tracks for the album
+            if hasattr(plugin, 'get_album_tracks'):
+                tracks = plugin.get_album_tracks(album_info.album_id)
+                if tracks:
+                    # Match tracks with items
+                    return self._match_tracks_to_items(tracks, items)
 
-                if hasattr(plugin, 'get_albums'):
-                    albums = plugin.get_albums(query)
-                    if albums:
-                        album_info = self._choose_album_metadata(albums, item)
-                        if album_info:
-                            if hasattr(plugin, 'get_album_tracks'):
-                                tracks = plugin.get_album_tracks(album_info.album_id)
-                                matching_track = self._find_matching_track(tracks, item)
-                                if matching_track:
-                                    return matching_track
-                            return album_info
+            return None
 
         except Exception as e:
             self._log.debug('Error querying source: {}', str(e))
             raise
-        return None
 
-    def _find_matching_track(self, tracks, item):
-        """Find the best matching track from a list of tracks."""
-        if not tracks:
-            return None
+    def _match_tracks_to_items(self, tracks, items):
+        """Match source tracks to local items and return metadata."""
+        matched_metadata = {}
 
-        # Try exact title match first
-        for track in tracks:
-            track_title = getattr(track, 'title', None)
-            if track_title and track_title.lower() == item.title.lower():
-                return track
+        # Create a mapping of normalized titles to tracks
+        track_map = {self._normalize_title(t.title): t for t in tracks}
 
-        # If no exact match, try fuzzy matching
-        best_match = None
-        best_score = 0
-        for track in tracks:
-            track_title = getattr(track, 'title', None)
-            if track_title:
-                score = self._compute_similarity(track_title.lower(), item.title.lower())
-                if score > best_score and score > 0.8:  # 80% similarity threshold
-                    best_score = score
-                    best_match = track
+        # Try to match each item to a track
+        for item in items:
+            normalized_title = self._normalize_title(item.title)
 
-        return best_match
+            # Try exact match first
+            track = track_map.get(normalized_title)
+
+            # If no exact match, try fuzzy matching
+            if not track:
+                best_match = None
+                best_score = 0
+                for track_title, track_info in track_map.items():
+                    score = self._compute_similarity(normalized_title, track_title)
+                    if score > best_score and score > 0.8:  # 80% similarity threshold
+                        best_score = score
+                        best_match = track_info
+                track = best_match
+
+            if track:
+                # Convert track object to dict if needed
+                if not isinstance(track, dict):
+                    track_dict = vars(track)
+                else:
+                    track_dict = track
+                matched_metadata[item] = track_dict
+
+        return matched_metadata if matched_metadata else None
+
+    def _normalize_title(self, title):
+        """Normalize a title for comparison."""
+        if not title:
+            return ""
+        # Remove special characters and convert to lowercase
+        import re
+        return re.sub(r'[^\w\s]', '', title.lower())
 
     def _compute_similarity(self, str1, str2):
         """Compute string similarity score."""
@@ -237,7 +222,7 @@ class MetaImportPlugin(BeetsPlugin):
         if len(albums) == 1:
             return albums[0]
 
-        print_(f'Multiple matches found for: {item.artist} - {item.title}')
+        print_(f'Multiple matches found for: {item.albumartist} - {item.album}')
         for i, album in enumerate(albums, 1):
             print_(f'{i}. {album.artist} - {album.album} ({getattr(album, "year", "N/A")})')
 
@@ -251,16 +236,24 @@ class MetaImportPlugin(BeetsPlugin):
             return None
         return albums[sel - 1] if sel > 0 else None
 
-    def _merge_metadata(self, metadata):
-        """Merge metadata from multiple sources according to priority."""
+    def _apply_album_metadata(self, items, metadata):
+        """Apply metadata to all items in an album."""
+        for item in items:
+            merged = self._merge_metadata_for_item(item, metadata)
+            if merged:
+                self._apply_metadata(item, merged)
+
+    def _merge_metadata_for_item(self, item, metadata):
+        """Merge metadata from multiple sources for a specific item."""
         merged = {}
         exclude_fields = self.config['exclude_fields'].as_str_seq()
 
         if self.config['merge_strategy'].get() == 'all':
             # Collect all unique values
             for source in self.sources:
-                if source in metadata:
-                    for key, value in metadata[source].items():
+                if source in metadata and metadata[source] and item in metadata[source]:
+                    source_meta = metadata[source][item]
+                    for key, value in source_meta.items():
                         if key not in exclude_fields and value:
                             if key not in merged:
                                 merged[key] = value
@@ -273,8 +266,9 @@ class MetaImportPlugin(BeetsPlugin):
         else:
             # Priority-based merge (first source wins)
             for source in self.sources:
-                if source in metadata:
-                    for key, value in metadata[source].items():
+                if source in metadata and metadata[source] and item in metadata[source]:
+                    source_meta = metadata[source][item]
+                    for key, value in source_meta.items():
                         if key not in exclude_fields and key not in merged and value:
                             merged[key] = value
 
