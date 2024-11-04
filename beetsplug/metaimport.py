@@ -236,8 +236,33 @@ class MetaImportPlugin(BeetsPlugin):
                     if not search_results:
                         continue
 
-                    # Get the first result
-                    track_info = search_results[0]
+                    # Show search results and let user choose
+                    print_(f'\nFound matches for: {item.title}')
+                    print_('Current track details:')
+                    print_(f'  Title: {item.title}')
+                    print_(f'  Artist: {item.artist}')
+                    print_(f'  Album: {item.album}')
+                    print_('\nAvailable matches:')
+
+                    for i, result in enumerate(search_results[:5], 1):  # Show top 5 results
+                        artists = [a['name'] for a in result.get('artists', [])]
+                        album = result.get('album', {}).get('name', 'N/A')
+                        print_(f'{i}. {result.get("title")} - {", ".join(artists)}')
+                        print_(f'   Album: {album}')
+                        if result.get('year'):
+                            print_(f'   Year: {result.get("year")}')
+
+                    print_('\nSelect the best match:')
+                    sel = ui.input_options(
+                        ('aBort', 'Skip'),
+                        numrange=(1, min(5, len(search_results))),
+                        default=1
+                    )
+
+                    if sel in ('b', 'B', 's', 'S'):
+                        continue
+
+                    track_info = search_results[sel - 1] if sel > 0 else None
                     if not track_info:
                         continue
 
@@ -272,29 +297,53 @@ class MetaImportPlugin(BeetsPlugin):
         """Match source tracks to local items and return metadata."""
         matched_metadata = {}
 
+        print_(f'\nMatching tracks for {source}:')
+        print_('=' * 80)
+
         # Create a mapping of normalized titles to tracks
         track_map = {self._normalize_title(t.title): t for t in tracks}
 
         # Try to match each item to a track
         for item in items:
+            print_(f'\nLocal track: {item.title}')
+            print_(f'Artist: {item.artist}')
             normalized_title = self._normalize_title(item.title)
 
             # Try exact match first
             track = track_map.get(normalized_title)
+            match_type = "exact"
 
             # If no exact match, try fuzzy matching
             if not track:
-                best_match = None
-                best_score = 0
+                matches = []
                 for track_title, track_info in track_map.items():
                     score = self._compute_similarity(normalized_title, track_title)
-                    if score > best_score and score > 0.8:  # 80% similarity threshold
-                        best_score = score
-                        best_match = track_info
-                track = best_match
+                    if score > 0.6:  # Show matches above 60% similarity
+                        matches.append((score, track_info))
+
+                if matches:
+                    # Sort matches by score
+                    matches.sort(reverse=True)
+                    # Show matches to user
+                    print_('\nPossible matches:')
+                    for i, (score, match) in enumerate(matches[:5], 1):  # Show top 5
+                        print_(f'{i}. {match.title} (similarity: {score:.2f})')
+                        if hasattr(match, 'artist'):
+                            print_(f'   Artist: {match.artist}')
+
+                    print_('\nSelect the best match:')
+                    sel = ui.input_options(
+                        ('aBort', 'Skip'),
+                        numrange=(1, min(5, len(matches))),
+                        default=1
+                    )
+
+                    if sel not in ('b', 'B', 's', 'S'):
+                        track = matches[sel - 1][1] if sel > 0 else None
+                        match_type = f"fuzzy ({matches[sel - 1][0]:.2f})"
 
             if track:
-                self._debug_log('Matched track {} to {}', item.title, track.title)
+                print_(f'Matched to: {track.title} ({match_type} match)')
                 # Keep original field names from the track object
                 track_dict = {}
 
@@ -318,11 +367,17 @@ class MetaImportPlugin(BeetsPlugin):
                             if value:
                                 track_dict[attr] = value
 
-                self._debug_log('Available fields for track: {}',
-                              pprint.pformat(track_dict))
                 matched_metadata[item] = track_dict
+
+                # Show available metadata fields
+                if track_dict:
+                    print_('Available metadata:')
+                    for key, value in track_dict.items():
+                        print_(f'  {key}: {value}')
             else:
-                self._debug_log('No match found for track: {}', item.title)
+                print_('No match found')
+
+            print_('-' * 40)
 
         return matched_metadata if matched_metadata else None
 
@@ -347,10 +402,25 @@ class MetaImportPlugin(BeetsPlugin):
         if len(albums) == 1:
             return albums[0]
 
-        print_(f'Multiple matches found for: {item.albumartist} - {item.album}')
-        for i, album in enumerate(albums, 1):
-            print_(f'{i}. {album.artist} - {album.album} ({getattr(album, "year", "N/A")})')
+        print_(f'\nMultiple matches found for: {item.albumartist} - {item.album}')
+        print_('Current album details:')
+        print_(f'  Title: {item.album}')
+        print_(f'  Artist: {item.albumartist}')
+        print_(f'  Year: {item.year}')
+        print_(f'  Tracks: {len(item.album_items())}')
+        print_('\nAvailable matches:')
 
+        for i, album in enumerate(albums, 1):
+            print_(f'\n{i}. {album.artist} - {album.album} ({getattr(album, "year", "N/A")})')
+            # Show additional details if available
+            if hasattr(album, 'tracks'):
+                print_(f'   Tracks: {len(album.tracks)}')
+            if hasattr(album, 'genre'):
+                print_(f'   Genre: {album.genre}')
+            if hasattr(album, 'label'):
+                print_(f'   Label: {album.label}')
+
+        print_('\nSelect the best match:')
         sel = ui.input_options(
             ('aBort', 'Skip'),
             numrange=(1, len(albums)),
@@ -363,12 +433,88 @@ class MetaImportPlugin(BeetsPlugin):
 
     def _apply_album_metadata(self, items, metadata):
         """Apply metadata to all items in an album."""
+        # First, collect all proposed changes
+        proposed_changes = {}
         for item in items:
             merged = self._merge_metadata_for_item(item, metadata)
             if merged:
-                self._debug_log('Merged metadata for {}: {}', item.title,
-                              pprint.pformat(merged))
-                self._apply_metadata(item, merged)
+                changes = self._get_proposed_changes(item, merged)
+                if changes:
+                    proposed_changes[item] = changes
+
+        if not proposed_changes:
+            self._log.info('No changes needed for any tracks')
+            return
+
+        # Show proposed changes and get confirmation
+        self._show_proposed_changes(proposed_changes)
+        if self._confirm_changes():
+            # Apply the changes
+            for item, changes in proposed_changes.items():
+                self._apply_changes(item, changes)
+        else:
+            self._log.info('Changes cancelled by user')
+
+    def _get_proposed_changes(self, item, metadata):
+        """Get proposed changes for an item."""
+        changes = {}
+        for key, value in metadata.items():
+            try:
+                if hasattr(item, key):
+                    current_value = getattr(item, key)
+                    if current_value != value:
+                        changes[key] = {
+                            'current': current_value,
+                            'new': value
+                        }
+            except Exception as e:
+                self._log.warning('Error checking field {}: {} ({})',
+                                key, str(e), type(e).__name__)
+        return changes
+
+    def _show_proposed_changes(self, proposed_changes):
+        """Show proposed changes in a user-friendly format."""
+        print_('\nProposed changes:')
+        print_('=' * 80)
+
+        for item, changes in proposed_changes.items():
+            print_(f'\nTrack: {item.title}')
+            print_('-' * 40)
+
+            # Show current path
+            print_(f'Path: {displayable_path(item.path)}')
+
+            # Show changes
+            for field, values in changes.items():
+                print_(f'  {field}:')
+                print_(f'    Current: {values["current"]}')
+                print_(f'    New    : {values["new"]}')
+            print_()
+
+    def _confirm_changes(self):
+        """Get user confirmation for changes."""
+        return ui.input_yn('Apply these changes? (Y/n)', True)
+
+    def _apply_changes(self, item, changes):
+        """Apply confirmed changes to an item."""
+        applied_changes = []
+        for key, values in changes.items():
+            try:
+                setattr(item, key, values['new'])
+                applied_changes.append(f'{key}: {values["current"]} -> {values["new"]}')
+            except Exception as e:
+                self._log.warning('Error setting field {}: {} ({})',
+                                key, str(e), type(e).__name__)
+
+        if applied_changes:
+            self._log.info('Applied changes to {}: {}',
+                          displayable_path(item.path), ', '.join(applied_changes))
+            try:
+                item.store()
+                self._log.info('Successfully stored changes to database')
+            except Exception as e:
+                self._log.error('Failed to store changes: {} ({})',
+                              str(e), type(e).__name__)
 
     def _merge_metadata_for_item(self, item, metadata):
         """Merge metadata from multiple sources for a specific item."""
