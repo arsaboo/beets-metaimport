@@ -1,4 +1,4 @@
-from beets import config, ui
+from beets import config, ui, autotag
 from beets.plugins import BeetsPlugin
 from beets.ui import print_
 from beets.util import displayable_path
@@ -124,6 +124,36 @@ class MetaImportPlugin(BeetsPlugin):
         for (albumartist, album_name), items in albums.items():
             self._log.info('Processing album: {} - {}', albumartist, album_name)
 
+            # Create an info object for autotag
+            info = autotag.AlbumInfo(
+                album=album_name,
+                album_id=None,
+                artist=albumartist,
+                artist_id=None,
+                tracks=[],
+                year=None,
+                month=None,
+                day=None,
+                label=None,
+                mediums=1,
+                artist_sort=None,
+                releasegroup_id=None,
+                asin=None,
+                catalognum=None,
+                script=None,
+                language=None,
+                country=None,
+                style=None,
+                genre=None,
+                albumtype=None,
+                albumstatus=None,
+                media=None,
+                albumdisambig=None,
+                artist_credit=None,
+                data_source='metaimport',
+                data_url=None
+            )
+
             # Collect metadata from all sources
             metadata = {}
             for source in self.sources:
@@ -143,7 +173,22 @@ class MetaImportPlugin(BeetsPlugin):
 
             # Apply metadata if found
             if metadata:
-                self._apply_album_metadata(items, metadata)
+                # Create a match proposal
+                candidates = [info]
+                proposal = autotag.Proposal(candidates)
+                proposal.show()
+
+                # Get user choice using beets' standard interface
+                sel = ui.input_options(
+                    ('Apply', 'More', 'Skip', 'Use as-is', 'as Tracks', 'Group albums'),
+                    'Enter search, enter Id, Apply, More, Skip, Use as-is, '
+                    'as Tracks, Group albums?'
+                )
+
+                if sel == 'a':
+                    self._apply_album_metadata(items, metadata)
+                elif sel == 's':
+                    self._log.info('Skipped album: {} - {}', albumartist, album_name)
             else:
                 self._log.info('No metadata found for album: {} - {}', albumartist, album_name)
 
@@ -175,36 +220,71 @@ class MetaImportPlugin(BeetsPlugin):
             if not albums:
                 return None
 
-            # Let user choose the correct album
-            album_info = self._choose_album_metadata(albums, items[0])
-            if not album_info:
+            # Create candidates for beets matching
+            candidates = []
+            for album in albums:
+                info = autotag.AlbumInfo(
+                    album=album.album,
+                    album_id=album.album_id,
+                    artist=album.artist,
+                    artist_id=None,
+                    tracks=[],
+                    year=getattr(album, 'year', None),
+                    month=None,
+                    day=None,
+                    label=getattr(album, 'label', None),
+                    mediums=1,
+                    artist_sort=None,
+                    releasegroup_id=None,
+                    asin=None,
+                    catalognum=None,
+                    script=None,
+                    language=None,
+                    country=None,
+                    style=None,
+                    genre=getattr(album, 'genre', None),
+                    albumtype=None,
+                    albumstatus=None,
+                    media=None,
+                    albumdisambig=None,
+                    artist_credit=None,
+                    data_source=source,
+                    data_url=None
+                )
+                candidates.append(info)
+
+            if not candidates:
                 return None
 
-            # Check if album_info has any useful data
-            if not hasattr(album_info, 'album_id'):
-                self._log.warning(f'Invalid album info from {source}: missing album_id')
-                return None
+            # Create a match proposal
+            proposal = autotag.Proposal(candidates)
+            proposal.show()
 
-            self._debug_log('Selected album info from {}: {}', source,
-                          pprint.pformat(vars(album_info)))
+            # Get user choice using beets' standard interface
+            sel = ui.input_options(
+                ('Apply', 'More', 'Skip', 'Use as-is', 'as Tracks', 'Group albums'),
+                'Enter search, enter Id, Apply, More, Skip, Use as-is, '
+                'as Tracks, Group albums?'
+            )
 
-            # Get tracks for the album
-            if hasattr(plugin, 'get_album_tracks'):
-                try:
-                    tracks = plugin.get_album_tracks(album_info.album_id)
-                    if not tracks:
-                        self._log.warning(f'No tracks found for album in {source}')
-                        return None
+            if sel == 'a':
+                # Get tracks for the selected album
+                if hasattr(plugin, 'get_album_tracks'):
+                    try:
+                        tracks = plugin.get_album_tracks(candidates[0].album_id)
+                        if not tracks:
+                            self._log.warning(f'No tracks found for album in {source}')
+                            return None
 
-                    self._debug_log('Found {} tracks for album', len(tracks))
-                    # Match tracks with items
-                    return self._match_tracks_to_items(tracks, items, source)
-                except Exception as e:
-                    self._log.warning('Error getting album tracks: {} ({})',
-                                    str(e), type(e).__name__)
-                    if self.config['debug'].get():
-                        import traceback
-                        self._log.debug('Traceback: {}', traceback.format_exc())
+                        self._debug_log('Found {} tracks for album', len(tracks))
+                        # Match tracks with items
+                        return self._match_tracks_to_items(tracks, items, source)
+                    except Exception as e:
+                        self._log.warning('Error getting album tracks: {} ({})',
+                                        str(e), type(e).__name__)
+                        if self.config['debug'].get():
+                            import traceback
+                            self._log.debug('Traceback: {}', traceback.format_exc())
 
             return None
 
@@ -231,53 +311,53 @@ class MetaImportPlugin(BeetsPlugin):
                     if not search_results:
                         continue
 
-                    # Show search results and let user choose
-                    print_(f'\nFound matches for: {item.title}')
-                    print_('Current track details:')
-                    print_(f'  Title: {item.title}')
-                    print_(f'  Artist: {item.artist}')
-                    print_(f'  Album: {item.album}')
-                    print_('\nAvailable matches:')
-
-                    for i, result in enumerate(search_results[:5], 1):  # Show top 5 results
+                    # Create candidates for beets matching
+                    candidates = []
+                    for result in search_results[:5]:  # Top 5 results
                         artists = [a['name'] for a in result.get('artists', [])]
                         album = result.get('album', {}).get('name', 'N/A')
-                        print_(f'{i}. {result.get("title")} - {", ".join(artists)}')
-                        print_(f'   Album: {album}')
-                        if result.get('year'):
-                            print_(f'   Year: {result.get("year")}')
+                        info = autotag.TrackInfo(
+                            title=result.get('title'),
+                            track_id=result.get('videoId'),
+                            artist=artists[0] if artists else None,
+                            artist_id=None,
+                            length=result.get('duration', 0),
+                            index=None,
+                            medium=None,
+                            medium_index=None,
+                            medium_total=None,
+                            artist_sort=None,
+                            disctitle=None,
+                            artist_credit=None,
+                            data_source='youtube',
+                            data_url=None
+                        )
+                        candidates.append(info)
 
-                    print_('\nSelect the best match:')
-                    sel = ui.input_options(
-                        ('aBort', 'Skip'),
-                        numrange=(1, min(5, len(search_results))),
-                        default=1
-                    )
+                    if candidates:
+                        # Create a match proposal
+                        proposal = autotag.Proposal(candidates)
+                        proposal.show()
 
-                    if sel in ('b', 'B', 's', 'S'):
-                        continue
+                        # Get user choice using beets' standard interface
+                        sel = ui.input_options(
+                            ('Apply', 'More', 'Skip', 'Use as-is', 'as Tracks', 'Group albums'),
+                            'Enter search, enter Id, Apply, More, Skip, Use as-is, '
+                            'as Tracks, Group albums?'
+                        )
 
-                    track_info = search_results[sel - 1] if sel > 0 else None
-                    if not track_info:
-                        continue
+                        if sel == 'a':
+                            # Convert the selected candidate to a metadata dictionary
+                            track_dict = {
+                                'title': candidates[0].title,
+                                'artist': candidates[0].artist,
+                                'youtube_id': candidates[0].track_id,
+                                'length': candidates[0].length
+                            }
+                            matched_metadata[item] = track_dict
+                            self._debug_log('Using YouTube metadata for track: {}',
+                                          pprint.pformat(track_dict))
 
-                    # Extract useful metadata
-                    track_dict = {
-                        'title': track_info.get('title'),
-                        'artist': track_info.get('artists', [{'name': None}])[0]['name'],
-                        'album': track_info.get('album', {}).get('name'),
-                        'year': track_info.get('year'),
-                        'duration': track_info.get('duration'),
-                        'youtube_id': track_info.get('videoId')
-                    }
-
-                    # Only include non-None values
-                    track_dict = {k: v for k, v in track_dict.items() if v is not None}
-
-                    if track_dict:
-                        matched_metadata[item] = track_dict
-                        self._debug_log('Found YouTube metadata for track: {}',
-                                      pprint.pformat(track_dict))
                 except Exception as e:
                     self._log.warning('YouTube search failed for {}: {}', item.title, str(e))
                     continue
@@ -295,84 +375,62 @@ class MetaImportPlugin(BeetsPlugin):
         print_(f'\nMatching tracks for {source}:')
         print_('=' * 80)
 
-        # Create a mapping of normalized titles to tracks
-        track_map = {self._normalize_title(t.title): t for t in tracks}
+        # Convert tracks to candidates for beets matching
+        candidates = []
+        for track in tracks:
+            info = autotag.TrackInfo(
+                title=track.title,
+                track_id=None,
+                artist=track.artist if hasattr(track, 'artist') else None,
+                artist_id=None,
+                length=track.duration if hasattr(track, 'duration') else 0,
+                index=None,
+                medium=None,
+                medium_index=None,
+                medium_total=None,
+                artist_sort=None,
+                disctitle=None,
+                artist_credit=None,
+                data_source=source,
+                data_url=None
+            )
+            candidates.append(info)
 
-        # Try to match each item to a track
-        for item in items:
-            print_(f'\nLocal track: {item.title}')
-            print_(f'Artist: {item.artist}')
-            normalized_title = self._normalize_title(item.title)
+        if candidates:
+            # Create a match proposal
+            proposal = autotag.Proposal(candidates)
+            proposal.show()
 
-            # Try exact match first
-            track = track_map.get(normalized_title)
-            match_type = "exact"
+            # Get user choice using beets' standard interface
+            sel = ui.input_options(
+                ('Apply', 'More', 'Skip', 'Use as-is', 'as Tracks', 'Group albums'),
+                'Enter search, enter Id, Apply, More, Skip, Use as-is, '
+                'as Tracks, Group albums?'
+            )
 
-            # If no exact match, try fuzzy matching
-            if not track:
-                matches = []
-                for track_title, track_info in track_map.items():
-                    score = self._compute_similarity(normalized_title, track_title)
-                    if score > 0.6:  # Show matches above 60% similarity
-                        matches.append((score, track_info))
-
-                if matches:
-                    # Sort matches by score
-                    matches.sort(reverse=True)
-                    # Show matches to user
-                    print_('\nPossible matches:')
-                    for i, (score, match) in enumerate(matches[:5], 1):  # Show top 5
-                        print_(f'{i}. {match.title} (similarity: {score:.2f})')
-                        if hasattr(match, 'artist'):
-                            print_(f'   Artist: {match.artist}')
-
-                    print_('\nSelect the best match:')
-                    sel = ui.input_options(
-                        ('aBort', 'Skip'),
-                        numrange=(1, min(5, len(matches))),
-                        default=1
-                    )
-
-                    if sel not in ('b', 'B', 's', 'S'):
-                        track = matches[sel - 1][1] if sel > 0 else None
-                        match_type = f"fuzzy ({matches[sel - 1][0]:.2f})"
-
-            if track:
-                print_(f'Matched to: {track.title} ({match_type} match)')
-                # Keep original field names from the track object
-                track_dict = {}
-
-                # Get all attributes from the track object
-                if source == 'youtube':
-                    # Handle YouTube track data structure
-                    if hasattr(track, 'to_dict'):
-                        track_dict = track.to_dict()
-                    else:
-                        # Fallback to getting attributes directly
-                        for attr in dir(track):
-                            if not attr.startswith('_') and not callable(getattr(track, attr)):
-                                value = getattr(track, attr)
-                                if value:
+            if sel == 'a':
+                # Match tracks based on order
+                for item, candidate in zip(items, candidates):
+                    if candidate:
+                        # Convert the candidate to a metadata dictionary
+                        track_dict = {
+                            'title': candidate.title,
+                            'artist': candidate.artist,
+                            'length': candidate.length
+                        }
+                        # Add any additional fields from the original track
+                        track_index = candidates.index(candidate)
+                        original_track = tracks[track_index]
+                        for attr in dir(original_track):
+                            if not attr.startswith('_') and not callable(getattr(original_track, attr)):
+                                value = getattr(original_track, attr)
+                                if value and attr not in track_dict:
                                     track_dict[attr] = value
-                else:
-                    # For other sources, get all attributes
-                    for attr in dir(track):
-                        if not attr.startswith('_') and not callable(getattr(track, attr)):
-                            value = getattr(track, attr)
-                            if value:
-                                track_dict[attr] = value
 
-                matched_metadata[item] = track_dict
-
-                # Show available metadata fields
-                if track_dict:
-                    print_('Available metadata:')
-                    for key, value in track_dict.items():
-                        print_(f'  {key}: {value}')
-            else:
-                print_('No match found')
-
-            print_('-' * 40)
+                        matched_metadata[item] = track_dict
+                        self._debug_log('Matched track {} to {}',
+                                      item.title,
+                                      pprint.pformat(track_dict))
 
         return matched_metadata if matched_metadata else None
 
@@ -388,44 +446,6 @@ class MetaImportPlugin(BeetsPlugin):
         """Compute string similarity score."""
         from difflib import SequenceMatcher
         return SequenceMatcher(None, str1, str2).ratio()
-
-    def _choose_album_metadata(self, albums, item):
-        """Let user choose the correct album if multiple matches found."""
-        if not albums:
-            return None
-
-        if len(albums) == 1:
-            return albums[0]
-
-        print_(f'\nMultiple matches found for: {item.albumartist} - {item.album}')
-        print_('Current album details:')
-        print_(f'  Title: {item.album}')
-        print_(f'  Artist: {item.albumartist}')
-        if item.year:
-            print_(f'  Year: {item.year}')
-
-        print_('\nAvailable matches:')
-
-        for i, album in enumerate(albums, 1):
-            print_(f'\n{i}. {album.artist} - {album.album} ({getattr(album, "year", "N/A")})')
-            # Show additional details if available
-            if hasattr(album, 'tracks'):
-                print_(f'   Tracks: {len(album.tracks)}')
-            if hasattr(album, 'genre'):
-                print_(f'   Genre: {album.genre}')
-            if hasattr(album, 'label'):
-                print_(f'   Label: {album.label}')
-
-        print_('\nSelect the best match:')
-        sel = ui.input_options(
-            ('aBort', 'Skip'),
-            numrange=(1, len(albums)),
-            default=1
-        )
-
-        if sel in ('b', 'B', 's', 'S'):
-            return None
-        return albums[sel - 1] if sel > 0 else None
 
     def _apply_album_metadata(self, items, metadata):
         """Apply metadata to all items in an album."""
