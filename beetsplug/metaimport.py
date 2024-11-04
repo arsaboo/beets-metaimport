@@ -175,7 +175,14 @@ class MetaImportPlugin(BeetsPlugin):
             if metadata:
                 # Create a match proposal
                 candidates = [info]
-                proposal = autotag.Proposal(candidates)
+                # Calculate recommendation based on string similarity
+                recommendation = autotag.Recommendation(
+                    strong=True,
+                    strong_rec=0.5,  # Medium-strong recommendation
+                    medium_rec=0.3,  # Medium recommendation
+                    rec=0.2  # Weak recommendation
+                )
+                proposal = autotag.Proposal(candidates, recommendation)
                 proposal.show()
 
                 # Get user choice using beets' standard interface
@@ -256,8 +263,17 @@ class MetaImportPlugin(BeetsPlugin):
             if not candidates:
                 return None
 
+            # Calculate recommendation based on string similarity
+            similarity = self._compute_similarity(album_name, candidates[0].album)
+            recommendation = autotag.Recommendation(
+                strong=similarity > 0.8,
+                strong_rec=0.8,
+                medium_rec=0.5,
+                rec=0.3
+            )
+
             # Create a match proposal
-            proposal = autotag.Proposal(candidates)
+            proposal = autotag.Proposal(candidates, recommendation)
             proposal.show()
 
             # Get user choice using beets' standard interface
@@ -335,8 +351,17 @@ class MetaImportPlugin(BeetsPlugin):
                         candidates.append(info)
 
                     if candidates:
+                        # Calculate recommendation based on string similarity
+                        similarity = self._compute_similarity(item.title, candidates[0].title)
+                        recommendation = autotag.Recommendation(
+                            strong=similarity > 0.8,
+                            strong_rec=0.8,
+                            medium_rec=0.5,
+                            rec=0.3
+                        )
+
                         # Create a match proposal
-                        proposal = autotag.Proposal(candidates)
+                        proposal = autotag.Proposal(candidates, recommendation)
                         proposal.show()
 
                         # Get user choice using beets' standard interface
@@ -397,8 +422,23 @@ class MetaImportPlugin(BeetsPlugin):
             candidates.append(info)
 
         if candidates:
+            # Calculate recommendation based on average string similarity
+            similarities = []
+            for item, candidate in zip(items, candidates):
+                if item and candidate:
+                    similarity = self._compute_similarity(item.title, candidate.title)
+                    similarities.append(similarity)
+
+            avg_similarity = sum(similarities) / len(similarities) if similarities else 0
+            recommendation = autotag.Recommendation(
+                strong=avg_similarity > 0.8,
+                strong_rec=0.8,
+                medium_rec=0.5,
+                rec=0.3
+            )
+
             # Create a match proposal
-            proposal = autotag.Proposal(candidates)
+            proposal = autotag.Proposal(candidates, recommendation)
             proposal.show()
 
             # Get user choice using beets' standard interface
