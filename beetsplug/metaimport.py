@@ -227,21 +227,31 @@ class MetaImportPlugin(BeetsPlugin):
 
             if track:
                 self._debug_log('Matched track {} to {}', item.title, track.title)
-                # Convert track object to dict with all available metadata
+                # Keep original field names from the track object
                 track_dict = {}
-                for attr in dir(track):
-                    # Skip private attributes and methods
-                    if not attr.startswith('_') and not callable(getattr(track, attr)):
-                        value = getattr(track, attr)
-                        if value:  # Only include non-empty values
-                            track_dict[attr] = value
 
-                # Add source-specific ID if available
-                if source == 'jiosaavn':
-                    track_dict['jiosaavn_id'] = getattr(track, 'id', None)
-                elif source == 'youtube':
-                    track_dict['youtube_id'] = getattr(track, 'id', None)
+                # Get all attributes from the track object
+                if source == 'youtube':
+                    # Handle YouTube track data structure
+                    if hasattr(track, 'to_dict'):
+                        track_dict = track.to_dict()
+                    else:
+                        # Fallback to getting attributes directly
+                        for attr in dir(track):
+                            if not attr.startswith('_') and not callable(getattr(track, attr)):
+                                value = getattr(track, attr)
+                                if value:
+                                    track_dict[attr] = value
+                else:
+                    # For other sources, get all attributes
+                    for attr in dir(track):
+                        if not attr.startswith('_') and not callable(getattr(track, attr)):
+                            value = getattr(track, attr)
+                            if value:
+                                track_dict[attr] = value
 
+                self._debug_log('Available fields for track: {}',
+                              pprint.pformat(track_dict))
                 matched_metadata[item] = track_dict
             else:
                 self._debug_log('No match found for track: {}', item.title)
@@ -325,17 +335,36 @@ class MetaImportPlugin(BeetsPlugin):
 
     def _apply_metadata(self, item, metadata):
         """Apply merged metadata to the item."""
+        self._log.info('Attempting to update metadata for: {}', item.title)
+        self._log.info('Available fields to update: {}', list(metadata.keys()))
+
         changes = []
         for key, value in metadata.items():
-            if hasattr(item, key):
-                current_value = getattr(item, key)
-                if current_value != value:
-                    setattr(item, key, value)
-                    changes.append(f'{key}: {current_value} -> {value}')
+            try:
+                if hasattr(item, key):
+                    current_value = getattr(item, key)
+                    if current_value != value:
+                        self._log.info('Updating field {} from {} to {}',
+                                     key, current_value, value)
+                        setattr(item, key, value)
+                        changes.append(f'{key}: {current_value} -> {value}')
+                    else:
+                        self._debug_log('Field {} unchanged (value: {})',
+                                      key, current_value)
+                else:
+                    self._debug_log('Field {} not available in item', key)
+            except Exception as e:
+                self._log.warning('Error setting field {}: {} ({})',
+                                key, str(e), type(e).__name__)
 
         if changes:
             self._log.info('Applied changes to {}: {}',
                           displayable_path(item.path), ', '.join(changes))
-            item.store()
+            try:
+                item.store()
+                self._log.info('Successfully stored changes to database')
+            except Exception as e:
+                self._log.error('Failed to store changes: {} ({})',
+                              str(e), type(e).__name__)
         else:
             self._log.info('No changes needed for: {}', displayable_path(item.path))
