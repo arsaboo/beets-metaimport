@@ -139,7 +139,6 @@ class MetaImportPlugin(BeetsPlugin):
                         self._debug_log('Raw metadata from {}: {}', source,
                                       pprint.pformat(source_metadata))
                         metadata[source] = source_metadata
-                        self._log.debug(f'Got metadata from {source} for {album_name}')
                 except Exception as e:
                     self._log.warning('Error getting metadata from {}: {} ({})',
                                     source, str(e), type(e).__name__)
@@ -187,7 +186,7 @@ class MetaImportPlugin(BeetsPlugin):
                     if tracks:
                         self._debug_log('Found {} tracks for album', len(tracks))
                         # Match tracks with items
-                        return self._match_tracks_to_items(tracks, items)
+                        return self._match_tracks_to_items(tracks, items, source)
                 except Exception as e:
                     self._log.warning('Error getting album tracks: {} ({})',
                                     str(e), type(e).__name__)
@@ -201,7 +200,7 @@ class MetaImportPlugin(BeetsPlugin):
             self._log.debug('Error querying source: {}', str(e))
             raise
 
-    def _match_tracks_to_items(self, tracks, items):
+    def _match_tracks_to_items(self, tracks, items, source):
         """Match source tracks to local items and return metadata."""
         matched_metadata = {}
 
@@ -228,18 +227,21 @@ class MetaImportPlugin(BeetsPlugin):
 
             if track:
                 self._debug_log('Matched track {} to {}', item.title, track.title)
-                # Convert track object to dict if needed
-                if not isinstance(track, dict):
-                    track_dict = {}
-                    # Extract common metadata fields
-                    for field in ['title', 'artist', 'album', 'year', 'track',
-                                'albumartist', 'genre', 'composer', 'lyricist']:
-                        if hasattr(track, field):
-                            value = getattr(track, field)
-                            if value:  # Only include non-empty values
-                                track_dict[field] = value
-                else:
-                    track_dict = track
+                # Convert track object to dict with all available metadata
+                track_dict = {}
+                for attr in dir(track):
+                    # Skip private attributes and methods
+                    if not attr.startswith('_') and not callable(getattr(track, attr)):
+                        value = getattr(track, attr)
+                        if value:  # Only include non-empty values
+                            track_dict[attr] = value
+
+                # Add source-specific ID if available
+                if source == 'jiosaavn':
+                    track_dict['jiosaavn_id'] = getattr(track, 'id', None)
+                elif source == 'youtube':
+                    track_dict['youtube_id'] = getattr(track, 'id', None)
+
                 matched_metadata[item] = track_dict
             else:
                 self._debug_log('No match found for track: {}', item.title)
