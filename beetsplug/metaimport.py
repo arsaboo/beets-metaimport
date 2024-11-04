@@ -11,6 +11,9 @@ import collections
 
 
 class MetaImportPlugin(BeetsPlugin):
+    # List of currently supported source plugins
+    SUPPORTED_SOURCES = ['youtube', 'jiosaavn']
+
     def __init__(self):
         super().__init__()
 
@@ -25,26 +28,36 @@ class MetaImportPlugin(BeetsPlugin):
         self.sources = []
         self.source_plugins = {}
 
-        configured_sources = self.config['sources'].as_str_seq()
-        if not configured_sources:
-            self._log.warning('No sources configured in metaimport.sources')
-            return
-
-        for source in configured_sources:
-            try:
-                # Dynamically import and initialize source plugins
-                plugin_class = self._get_plugin_class(source)
-                if plugin_class:
-                    plugin_instance = plugin_class()
-                    # Verify the plugin has the required methods
-                    if hasattr(plugin_instance, 'get_albums') or hasattr(plugin_instance, 'get_track'):
-                        self.source_plugins[source] = plugin_instance
-                        self.sources.append(source)
-                        self._log.debug(f'Successfully loaded source plugin: {source}')
+        # Only try to load sources if they are explicitly configured
+        if self.config['sources'].exists():
+            configured_sources = self.config['sources'].as_str_seq()
+            if configured_sources:
+                self._log.debug(f'Configured sources: {configured_sources}')
+                # Filter out unsupported sources with a warning
+                for source in configured_sources:
+                    if source not in self.SUPPORTED_SOURCES:
+                        self._log.warning(f'Unsupported source plugin: {source}. '
+                                        f'Supported sources are: {", ".join(self.SUPPORTED_SOURCES)}')
                     else:
-                        self._log.warning(f'Source plugin {source} missing required methods')
-            except Exception as e:
-                self._log.warning(f'Failed to initialize source {source}: {str(e)}')
+                        self._init_source(source)
+            else:
+                self._log.debug('No sources configured in metaimport.sources')
+
+    def _init_source(self, source):
+        """Initialize a single source plugin."""
+        try:
+            plugin_class = self._get_plugin_class(source)
+            if plugin_class:
+                plugin_instance = plugin_class()
+                # Verify the plugin has the required methods
+                if hasattr(plugin_instance, 'get_albums') or hasattr(plugin_instance, 'get_track'):
+                    self.source_plugins[source] = plugin_instance
+                    self.sources.append(source)
+                    self._log.debug(f'Successfully loaded source plugin: {source}')
+                else:
+                    self._log.warning(f'Source plugin {source} missing required methods')
+        except Exception as e:
+            self._log.warning(f'Failed to initialize source {source}: {str(e)}')
 
     def _get_plugin_class(self, source):
         """Get the plugin class for a given source."""
@@ -55,9 +68,7 @@ class MetaImportPlugin(BeetsPlugin):
             elif source == 'youtube':
                 from beetsplug.youtube import YouTubePlugin
                 return YouTubePlugin
-            else:
-                self._log.warning(f'Unsupported source plugin: {source}')
-                return None
+            return None
         except ImportError as e:
             self._log.warning(f'Could not import plugin for source {source}: {str(e)}')
             return None
@@ -73,7 +84,8 @@ class MetaImportPlugin(BeetsPlugin):
     def _command(self, lib, opts, args):
         """Main command implementation."""
         if not self.sources:
-            self._log.warning('No metadata sources available. Check your configuration.')
+            self._log.warning('No valid metadata sources available. '
+                            f'Supported sources are: {", ".join(self.SUPPORTED_SOURCES)}')
             return
 
         items = lib.items(ui.decargs(args))
@@ -93,7 +105,7 @@ class MetaImportPlugin(BeetsPlugin):
             for source in self.sources:
                 try:
                     plugin = self.source_plugins[source]
-                    source_metadata = self._get_metadata_from_source(plugin, item)
+                    source_metadata = self._get_metadata_from_source(plugin, item, source)
                     if source_metadata:
                         metadata[source] = source_metadata
                         self._log.debug(f'Got metadata from {source} for {item.title}')
@@ -107,41 +119,85 @@ class MetaImportPlugin(BeetsPlugin):
             else:
                 self._log.info('No metadata found for: {}', displayable_path(item.path))
 
-    def _get_metadata_from_source(self, plugin, item):
-        """Get metadata for an item from a specific source."""
-        try:
-            # Build a rich query using available item information
+    def _build_search_query(self, item, source):
+        """Build an appropriate search query based on the source and available item info."""
+        if source == 'jiosaavn':
+            # For JioSaavn, use title and artist for more accurate results
             query_parts = []
+            if item.title:
+                query_parts.append(item.title)
+            if item.artist:
+                query_parts.append(item.artist)
+            return ' '.join(query_parts)
+        else:
+            # For other sources, include album info
+            query_parts = []
+            if item.title:
+                query_parts.append(item.title)
             if item.artist:
                 query_parts.append(item.artist)
             if item.album:
                 query_parts.append(item.album)
-            if item.title:
-                query_parts.append(item.title)
+            return ' '.join(query_parts)
 
-            query = ' '.join(query_parts)
-            self._log.debug(f'Searching with query: {query}')
+    def _get_metadata_from_source(self, plugin, item, source):
+        """Get metadata for an item from a specific source."""
+        try:
+            query = self._build_search_query(item, source)
+            self._log.debug(f'Searching {source} for: {query}')
 
-            if hasattr(plugin, 'get_track'):
-                track_info = plugin.get_track(query)
-                if track_info:
-                    return track_info
+            if source == 'jiosaavn':
+                # Special handling for JioSaavn
+                try:
+                    if hasattr(plugin, 'get_track'):
+                        track_info = plugin.get_track(query)
+                        if track_info:
+                            # Convert track_info to a dict if it isn't already
+                            if not isinstance(track_info, dict):
+                                track_info = vars(track_info)
+                            return track_info
+                except Exception as e:
+                    self._log.debug(f'JioSaavn track search failed: {str(e)}')
 
-            if hasattr(plugin, 'get_albums'):
-                albums = plugin.get_albums(query)
-                if albums:
-                    album_info = self._choose_album_metadata(albums, item)
-                    if album_info:
-                        # Try to find the matching track in the album
-                        if hasattr(plugin, 'get_album_tracks'):
-                            tracks = plugin.get_album_tracks(album_info.album_id)
-                            matching_track = self._find_matching_track(tracks, item)
-                            if matching_track:
-                                return matching_track
-                        return album_info
+                # Try album search as fallback
+                try:
+                    if hasattr(plugin, 'get_albums'):
+                        albums = plugin.get_albums(query)
+                        if albums:
+                            album_info = self._choose_album_metadata(albums, item)
+                            if album_info and hasattr(plugin, 'get_album_tracks'):
+                                tracks = plugin.get_album_tracks(album_info.album_id)
+                                matching_track = self._find_matching_track(tracks, item)
+                                if matching_track:
+                                    # Convert matching_track to a dict if it isn't already
+                                    if not isinstance(matching_track, dict):
+                                        matching_track = vars(matching_track)
+                                    return matching_track
+                except Exception as e:
+                    self._log.debug(f'JioSaavn album search failed: {str(e)}')
+
+            else:
+                # Generic handling for other sources
+                if hasattr(plugin, 'get_track'):
+                    track_info = plugin.get_track(query)
+                    if track_info:
+                        return track_info
+
+                if hasattr(plugin, 'get_albums'):
+                    albums = plugin.get_albums(query)
+                    if albums:
+                        album_info = self._choose_album_metadata(albums, item)
+                        if album_info:
+                            if hasattr(plugin, 'get_album_tracks'):
+                                tracks = plugin.get_album_tracks(album_info.album_id)
+                                matching_track = self._find_matching_track(tracks, item)
+                                if matching_track:
+                                    return matching_track
+                            return album_info
 
         except Exception as e:
             self._log.debug('Error querying source: {}', str(e))
+            raise
         return None
 
     def _find_matching_track(self, tracks, item):
@@ -151,23 +207,25 @@ class MetaImportPlugin(BeetsPlugin):
 
         # Try exact title match first
         for track in tracks:
-            if track.title.lower() == item.title.lower():
+            track_title = getattr(track, 'title', None)
+            if track_title and track_title.lower() == item.title.lower():
                 return track
 
         # If no exact match, try fuzzy matching
         best_match = None
         best_score = 0
         for track in tracks:
-            score = self._compute_similarity(track.title.lower(), item.title.lower())
-            if score > best_score and score > 0.8:  # 80% similarity threshold
-                best_score = score
-                best_match = track
+            track_title = getattr(track, 'title', None)
+            if track_title:
+                score = self._compute_similarity(track_title.lower(), item.title.lower())
+                if score > best_score and score > 0.8:  # 80% similarity threshold
+                    best_score = score
+                    best_match = track
 
         return best_match
 
     def _compute_similarity(self, str1, str2):
         """Compute string similarity score."""
-        # Simple Levenshtein distance based similarity
         from difflib import SequenceMatcher
         return SequenceMatcher(None, str1, str2).ratio()
 
