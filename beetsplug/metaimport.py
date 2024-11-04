@@ -167,24 +167,27 @@ class MetaImportPlugin(BeetsPlugin):
             query = self._build_album_query(albumartist, album_name, source)
             self._log.info(f'Searching {source} for album: {query}')
 
+            # For YouTube, skip album lookup and go straight to track search
+            if source == 'youtube':
+                return self._get_youtube_tracks_metadata(plugin, items)
+
             try:
                 albums = plugin.get_albums(query)
             except Exception as e:
                 self._log.warning(f'Error getting albums from {source}: {str(e)}')
-                if source == 'youtube':
-                    # For YouTube, try searching for individual tracks instead
-                    return self._get_youtube_tracks_metadata(plugin, items)
                 return None
 
             if not albums:
-                if source == 'youtube':
-                    # For YouTube, try searching for individual tracks instead
-                    return self._get_youtube_tracks_metadata(plugin, items)
                 return None
 
             # Let user choose the correct album
             album_info = self._choose_album_metadata(albums, items[0])
             if not album_info:
+                return None
+
+            # Check if album_info has any useful data
+            if not hasattr(album_info, 'album_id'):
+                self._log.warning(f'Invalid album info from {source}: missing album_id')
                 return None
 
             self._debug_log('Selected album info from {}: {}', source,
@@ -194,16 +197,16 @@ class MetaImportPlugin(BeetsPlugin):
             if hasattr(plugin, 'get_album_tracks'):
                 try:
                     tracks = plugin.get_album_tracks(album_info.album_id)
-                    if tracks:
-                        self._debug_log('Found {} tracks for album', len(tracks))
-                        # Match tracks with items
-                        return self._match_tracks_to_items(tracks, items, source)
+                    if not tracks:
+                        self._log.warning(f'No tracks found for album in {source}')
+                        return None
+
+                    self._debug_log('Found {} tracks for album', len(tracks))
+                    # Match tracks with items
+                    return self._match_tracks_to_items(tracks, items, source)
                 except Exception as e:
                     self._log.warning('Error getting album tracks: {} ({})',
                                     str(e), type(e).__name__)
-                    if source == 'youtube':
-                        # For YouTube, try searching for individual tracks instead
-                        return self._get_youtube_tracks_metadata(plugin, items)
                     if self.config['debug'].get():
                         import traceback
                         self._log.debug('Traceback: {}', traceback.format_exc())
@@ -216,32 +219,49 @@ class MetaImportPlugin(BeetsPlugin):
 
     def _get_youtube_tracks_metadata(self, plugin, items):
         """Get metadata for individual tracks from YouTube."""
-        self._log.info('Falling back to individual track search for YouTube')
+        self._log.info('Searching YouTube tracks individually')
         matched_metadata = {}
 
         for item in items:
             try:
                 # Build search query using track title and artist
-                query = f"{item.title} {item.artist}"
+                query = f"{item.title}"
+                if item.artist and item.artist.lower() != "various artists":
+                    query = f"{query} {item.artist}"
                 self._debug_log('Searching YouTube for track: {}', query)
 
                 # Search for the track
-                if hasattr(plugin, 'get_track'):
-                    track_info = plugin.get_track(query)
-                    if track_info:
-                        # Convert track info to dict if needed
-                        if hasattr(track_info, 'to_dict'):
-                            track_dict = track_info.to_dict()
-                        else:
-                            track_dict = {}
-                            for attr in dir(track_info):
-                                if not attr.startswith('_') and not callable(getattr(track_info, attr)):
-                                    value = getattr(track_info, attr)
-                                    if value:
-                                        track_dict[attr] = value
+                try:
+                    search_results = plugin.yt.search(query, filter="songs")
+                    if not search_results:
+                        continue
 
+                    # Get the first result
+                    track_info = search_results[0]
+                    if not track_info:
+                        continue
+
+                    # Extract useful metadata
+                    track_dict = {
+                        'title': track_info.get('title'),
+                        'artist': track_info.get('artists', [{'name': None}])[0]['name'],
+                        'album': track_info.get('album', {}).get('name'),
+                        'year': track_info.get('year'),
+                        'duration': track_info.get('duration'),
+                        'youtube_id': track_info.get('videoId')
+                    }
+
+                    # Only include non-None values
+                    track_dict = {k: v for k, v in track_dict.items() if v is not None}
+
+                    if track_dict:
                         matched_metadata[item] = track_dict
-                        self._debug_log('Found YouTube metadata for track: {}', item.title)
+                        self._debug_log('Found YouTube metadata for track: {}',
+                                      pprint.pformat(track_dict))
+                except Exception as e:
+                    self._log.warning('YouTube search failed for {}: {}', item.title, str(e))
+                    continue
+
             except Exception as e:
                 self._log.warning('Error getting YouTube metadata for track {}: {}',
                                 item.title, str(e))
