@@ -158,8 +158,8 @@ class MetaImportPlugin(BeetsPlugin):
             # For JioSaavn, use album name and artist
             return f"{album_name} {albumartist}"
         else:
-            # For other sources, same format
-            return f"{album_name} {albumartist}"
+            # For YouTube, use just the album name for better results
+            return album_name
 
     def _get_album_metadata(self, plugin, albumartist, album_name, items, source):
         """Get metadata for an album from a specific source."""
@@ -167,8 +167,19 @@ class MetaImportPlugin(BeetsPlugin):
             query = self._build_album_query(albumartist, album_name, source)
             self._log.info(f'Searching {source} for album: {query}')
 
-            albums = plugin.get_albums(query)
+            try:
+                albums = plugin.get_albums(query)
+            except Exception as e:
+                self._log.warning(f'Error getting albums from {source}: {str(e)}')
+                if source == 'youtube':
+                    # For YouTube, try searching for individual tracks instead
+                    return self._get_youtube_tracks_metadata(plugin, items)
+                return None
+
             if not albums:
+                if source == 'youtube':
+                    # For YouTube, try searching for individual tracks instead
+                    return self._get_youtube_tracks_metadata(plugin, items)
                 return None
 
             # Let user choose the correct album
@@ -190,6 +201,9 @@ class MetaImportPlugin(BeetsPlugin):
                 except Exception as e:
                     self._log.warning('Error getting album tracks: {} ({})',
                                     str(e), type(e).__name__)
+                    if source == 'youtube':
+                        # For YouTube, try searching for individual tracks instead
+                        return self._get_youtube_tracks_metadata(plugin, items)
                     if self.config['debug'].get():
                         import traceback
                         self._log.debug('Traceback: {}', traceback.format_exc())
@@ -199,6 +213,40 @@ class MetaImportPlugin(BeetsPlugin):
         except Exception as e:
             self._log.debug('Error querying source: {}', str(e))
             raise
+
+    def _get_youtube_tracks_metadata(self, plugin, items):
+        """Get metadata for individual tracks from YouTube."""
+        self._log.info('Falling back to individual track search for YouTube')
+        matched_metadata = {}
+
+        for item in items:
+            try:
+                # Build search query using track title and artist
+                query = f"{item.title} {item.artist}"
+                self._debug_log('Searching YouTube for track: {}', query)
+
+                # Search for the track
+                if hasattr(plugin, 'get_track'):
+                    track_info = plugin.get_track(query)
+                    if track_info:
+                        # Convert track info to dict if needed
+                        if hasattr(track_info, 'to_dict'):
+                            track_dict = track_info.to_dict()
+                        else:
+                            track_dict = {}
+                            for attr in dir(track_info):
+                                if not attr.startswith('_') and not callable(getattr(track_info, attr)):
+                                    value = getattr(track_info, attr)
+                                    if value:
+                                        track_dict[attr] = value
+
+                        matched_metadata[item] = track_dict
+                        self._debug_log('Found YouTube metadata for track: {}', item.title)
+            except Exception as e:
+                self._log.warning('Error getting YouTube metadata for track {}: {}',
+                                item.title, str(e))
+
+        return matched_metadata if matched_metadata else None
 
     def _match_tracks_to_items(self, tracks, items, source):
         """Match source tracks to local items and return metadata."""
