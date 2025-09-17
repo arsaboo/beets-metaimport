@@ -50,11 +50,9 @@ class MetaImportContext:
     sources: List[str]
     plugins: Dict[str, MetadataSourcePlugin]
     primary_source: str
-    allow_common_from: set[str]
     force: bool
     write: bool
     dry_run: bool
-    auto_skip_existing_ids: bool
     max_distance: Optional[float]
 
 
@@ -67,9 +65,7 @@ class MetaImportPlugin(BeetsPlugin):
             {
                 "sources": "auto",
                 "primary_source": None,
-                "allow_common_from": [],
                 "write": True,
-                "auto_skip_existing_ids": True,
                 "max_distance": None,
                 "dry_run": False,
             }
@@ -156,17 +152,9 @@ class MetaImportPlugin(BeetsPlugin):
         if not primary_source and sources:
             primary_source = sources[-1]
 
-        allow_common_cfg = {
-            self._normalize_source(s)
-            for s in self.config["allow_common_from"].as_str_seq()
-        }
-        if primary_source:
-            allow_common_cfg.add(primary_source)
-
         force = bool(opts.force)
         dry_run = bool(opts.dry_run) or self.config["dry_run"].get(bool)
         write = self.config["write"].get(bool)
-        auto_skip = self.config["auto_skip_existing_ids"].get(bool)
         max_distance_opt = opts.max_distance
         if max_distance_opt is None:
             max_distance_cfg = self.config["max_distance"].get()
@@ -188,11 +176,9 @@ class MetaImportPlugin(BeetsPlugin):
             sources=sources,
             plugins=plugins_by_key,
             primary_source=primary_source or "",
-            allow_common_from=allow_common_cfg,
             force=force,
             write=write,
             dry_run=dry_run,
-            auto_skip_existing_ids=auto_skip,
             max_distance=max_distance,
         )
 
@@ -283,7 +269,7 @@ class MetaImportPlugin(BeetsPlugin):
                 self._log.debug(f"Source {source_key} no longer available; skipping")
                 continue
 
-            allow_common = source_key in context.allow_common_from
+            allow_common = source_key == context.primary_source
             result = self._process_source_for_album(
                 album,
                 items,
@@ -315,7 +301,7 @@ class MetaImportPlugin(BeetsPlugin):
         existing_id = self._current_source_id(album, source_key)
         used_existing_id = False
 
-        if existing_id and context.auto_skip_existing_ids and not context.force:
+        if existing_id and not context.force:
             self._log.debug(
                 f"{plugin.data_source} already has ID {existing_id}; loading existing metadata"
             )
