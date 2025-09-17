@@ -7,7 +7,7 @@ A [beets](https://github.com/beetbox/beets) plugin that aggregates metadata from
 The metaimport plugin works with your existing beets metadata source plugins (like MusicBrainz, Spotify, Deezer, etc.) to:
 
 1. **Aggregate metadata**: Collect metadata from multiple sources for each album
-2. **Smart field handling**: Apply source-specific fields (e.g., `spotify_album_id`) from all sources, and common fields (e.g., `artist`, `album`) only from the primary source
+2. **Apply all fields**: Each source applies all the fields it provides, with later sources overwriting earlier ones
 3. **Reuse existing IDs**: Automatically use existing source IDs when available to avoid redundant lookups
 4. **Interactive selection**: Present you with match candidates when automatic matching isn't confident enough
 
@@ -31,7 +31,7 @@ metaimport:
     primary_source: null       # Which source to use for common fields (defaults to last in list)
     write: true               # Write changes to files
     max_distance: null        # Auto-accept threshold (lower = stricter)
-    dry_run: false           # Show changes without applying them
+    pretend: false           # Show changes without applying them
 ```
 
 ### Configuration Options
@@ -40,13 +40,13 @@ metaimport:
   - `"auto"` (default): Use all available metadata source plugins
   - List of sources: `["musicbrainz", "spotify", "deezer"]` - only use specified sources
 
-- **`primary_source`**: Which source to trust for common fields like `artist`, `album`, `genre`. Defaults to the last source in the list. Source-specific fields (like `spotify_album_id`) are always applied from their respective sources.
+- **`primary_source`**: Which source to process last, giving it the final say on overlapping fields. Defaults to the last source in the list.
 
 - **`write`**: Whether to write metadata changes to audio files (default: `true`)
 
 - **`max_distance`**: Auto-accept matches below this distance threshold. If not set, you'll be prompted for all matches.
 
-- **`dry_run`**: Show what would be changed without actually applying changes
+- **`pretend`**: Show what would be changed without actually applying changes
 
 ## Usage
 
@@ -57,7 +57,7 @@ beet metaimport [options] [query]
 ### Options
 
 - `-f, --force`: Re-run lookups even when source IDs already exist
-- `--dry-run`: Show planned changes without storing them
+- `-p, --pretend`: Show planned changes without storing them
 - `--primary-source SOURCE`: Override primary source for this run
 - `--max-distance FLOAT`: Override max distance threshold
 
@@ -80,7 +80,7 @@ beet metaimport --force album:"Abbey Road"
 
 See what would change without applying:
 ```bash
-beet metaimport --dry-run artist:Beatles
+beet metaimport --pretend artist:Beatles
 ```
 
 Use specific primary source:
@@ -99,36 +99,25 @@ For each album in your query:
 3. **Present matches**: If automatic matching isn't confident enough, you'll see an interactive prompt with match candidates
 
 4. **Apply metadata**:
-   - **Source-specific fields**: Always applied (e.g., `mb_albumid`, `spotify_track_id`)
-   - **Common fields**: Only applied from the primary source (e.g., `artist`, `album`, `genre`)
+   - Each source applies all the metadata fields it provides
+   - Sources are processed in order, with later sources overwriting earlier ones
+   - The primary source (processed last) has the final say on any overlapping fields
 
 5. **Save changes**: Store to database and optionally write to files
 
 ## Field Handling
 
-The plugin handles two types of fields differently:
+The plugin applies all metadata fields provided by each source:
 
-### Source-Specific Fields
-Always applied from their respective sources:
-- `mb_albumid`, `mb_trackid` (from MusicBrainz)
-- `spotify_album_id`, `spotify_track_id` (from Spotify)
-- `deezer_album_id`, `deezer_track_id` (from Deezer)
-- etc.
+- **All fields applied**: Each source contributes all the metadata it provides (e.g., `artist`, `album`, `spotify_album_id`, `genre`, etc.)
+- **Processing order matters**: Sources are processed in the configured order, with later sources overwriting earlier ones for the same fields
+- **Primary source wins**: The primary source (last in processing order) has the final say on any overlapping field values
 
-### Common Fields
-Only applied from the primary source to avoid conflicts:
-- `artist`, `albumartist`, `album`, `title`
-- `genre`, `year`, `label`
-- `bpm`, `key`, `energy`
-- etc.
-
-## Requirements
-
-The plugin works with any beets metadata source plugins you have installed, such as:
-- Built-in MusicBrainz support
-- [beets-spotify](https://github.com/timothyb89/beets-spotify)
-- [beets-deezer](https://github.com/rhlabs/beets-deezer)
-- Any other metadata source plugin
+### Example
+If you configure sources as `["spotify", "musicbrainz"]` with `musicbrainz` as primary:
+1. Spotify applies: `artist`, `album`, `spotify_album_id`, `spotify_track_id`, etc.
+2. MusicBrainz applies: `artist`, `album`, `mb_albumid`, `mb_trackid`, `genre`, etc.
+3. Final result: MusicBrainz values for `artist`, `album`, `genre` + Spotify IDs + MusicBrainz IDs
 
 ## Troubleshooting
 

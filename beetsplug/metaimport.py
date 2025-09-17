@@ -67,7 +67,7 @@ class MetaImportPlugin(BeetsPlugin):
                 "primary_source": None,
                 "write": True,
                 "max_distance": None,
-                "dry_run": False,
+                "pretend": False,
             }
         )
         self._terminal_session: ui_commands.TerminalImportSession | None = None
@@ -85,9 +85,10 @@ class MetaImportPlugin(BeetsPlugin):
             help="re-run lookups even when source IDs already exist",
         )
         cmd.parser.add_option(
-            "--dry-run",
+            "-p",
+            "--pretend",
             action="store_true",
-            dest="dry_run",
+            dest="pretend",
             default=False,
             help="show planned changes without storing them",
         )
@@ -153,7 +154,7 @@ class MetaImportPlugin(BeetsPlugin):
             primary_source = sources[-1]
 
         force = bool(opts.force)
-        dry_run = bool(opts.dry_run) or self.config["dry_run"].get(bool)
+        pretend = bool(opts.pretend) or self.config["pretend"].get(bool)
         write = self.config["write"].get(bool)
         max_distance_opt = opts.max_distance
         if max_distance_opt is None:
@@ -178,7 +179,7 @@ class MetaImportPlugin(BeetsPlugin):
             primary_source=primary_source or "",
             force=force,
             write=write,
-            dry_run=dry_run,
+            dry_run=pretend,
             max_distance=max_distance,
         )
 
@@ -269,13 +270,11 @@ class MetaImportPlugin(BeetsPlugin):
                 self._log.debug(f"Source {source_key} no longer available; skipping")
                 continue
 
-            allow_common = source_key == context.primary_source
             result = self._process_source_for_album(
                 album,
                 items,
                 plugin,
                 source_key,
-                allow_common,
                 context,
                 terminal_session,
             )
@@ -286,7 +285,7 @@ class MetaImportPlugin(BeetsPlugin):
                 )
                 continue
 
-            self._apply_result(album, result, allow_common, context)
+            self._apply_result(album, result, context)
 
     def _process_source_for_album(
         self,
@@ -294,7 +293,6 @@ class MetaImportPlugin(BeetsPlugin):
         items: List[Item],
         plugin: MetadataSourcePlugin,
         source_key: str,
-        allow_common: bool,
         context: MetaImportContext,
         terminal_session: ui_commands.TerminalImportSession,
     ) -> SourceMatchResult:
@@ -467,7 +465,6 @@ class MetaImportPlugin(BeetsPlugin):
         self,
         album: Album,
         result: SourceMatchResult,
-        allow_common: bool,
         context: MetaImportContext,
     ) -> None:
         if not result.match:
@@ -480,7 +477,6 @@ class MetaImportPlugin(BeetsPlugin):
             album,
             album_info,
             result.source,
-            allow_common,
             context.dry_run,
         )
 
@@ -490,7 +486,6 @@ class MetaImportPlugin(BeetsPlugin):
                 item,
                 track_info,
                 result.source,
-                allow_common,
                 context.dry_run,
             )
             if changes:
@@ -504,7 +499,7 @@ class MetaImportPlugin(BeetsPlugin):
             album.store()
 
         if album_changes or track_changed:
-            suffix = " (dry run)" if context.dry_run else ""
+            suffix = " (pretend)" if context.dry_run else ""
             self._log.info(f"Applied {result.plugin.data_source} metadata{suffix}")
 
     def _apply_album_fields(
@@ -512,21 +507,12 @@ class MetaImportPlugin(BeetsPlugin):
         album: Album,
         album_info: autotag_hooks.AlbumInfo,
         source_key: str,
-        allow_common: bool,
         dry_run: bool,
     ) -> Dict[str, Tuple[object, object]]:
         changes: Dict[str, Tuple[object, object]] = {}
-        prefixes = PREFIX_OVERRIDES.get(source_key, (f"{source_key}_",))
-        valid_fields = {name.lower() for name in album.keys(computed=True)}
 
         for field, value in album_info.items():
             if value is None:
-                continue
-
-            lname = field.lower()
-            if not self._field_allowed(
-                lname, prefixes, allow_common, valid_fields, ALBUM_PASSTHROUGH_FIELDS
-            ):
                 continue
 
             current = album.get(field)
@@ -543,23 +529,12 @@ class MetaImportPlugin(BeetsPlugin):
         item: Item,
         track_info: autotag_hooks.TrackInfo,
         source_key: str,
-        allow_common: bool,
         dry_run: bool,
     ) -> Dict[str, Tuple[object, object]]:
         changes: Dict[str, Tuple[object, object]] = {}
-        prefixes = PREFIX_OVERRIDES.get(source_key, (f"{source_key}_",))
-        valid_fields = {
-            name.lower() for name in item.keys(computed=True, with_album=False)
-        }
 
         for field, value in track_info.items():
             if value is None:
-                continue
-
-            lname = field.lower()
-            if not self._field_allowed(
-                lname, prefixes, allow_common, valid_fields, TRACK_PASSTHROUGH_FIELDS
-            ):
                 continue
 
             current = item.get(field)
@@ -570,22 +545,6 @@ class MetaImportPlugin(BeetsPlugin):
                 item[field] = value
 
         return changes
-
-    def _field_allowed(
-        self,
-        field: str,
-        prefixes: Tuple[str, ...],
-        allow_common: bool,
-        valid_fields: set[str],
-        passthrough: set[str],
-    ) -> bool:
-        if any(field.startswith(prefix) for prefix in prefixes):
-            return True
-
-        if allow_common and (field in valid_fields or field in passthrough):
-            return True
-
-        return False
 
     def _current_source_id(self, album: Album, source_key: str) -> Optional[str]:
         for field in ID_FIELD_OVERRIDES.get(
